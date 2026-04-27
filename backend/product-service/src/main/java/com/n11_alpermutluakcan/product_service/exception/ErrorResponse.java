@@ -1,4 +1,12 @@
 package com.n11_alpermutluakcan.product_service.exception;
 
-public class ErrorResponse {
+import java.time.LocalDateTime;
+
+public record ErrorResponse(
+        LocalDateTime timestamp,
+        int status,
+        String error,
+        String message,
+        String path
+) {
 }

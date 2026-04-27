@@ -1,4 +1,4 @@
-package com.n11_alpermutluakcan.product_server.entity;
+package com.n11_alpermutluakcan.product_service.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
@@ -21,6 +21,9 @@ public class Product {
 
     @Column(nullable = false)
     private String name;
+
+    @Column(nullable = false, length = 1000)
+    private String description;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal price;
