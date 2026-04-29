@@ -23,6 +23,21 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler({ProductInactiveException.class, InsufficientStockException.class})
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ErrorResponse handleBusinessValidationException(
+            RuntimeException exception,
+            HttpServletRequest request
+    ) {
+        return new ErrorResponse(
+                java.time.LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                "BUSINESS_VALIDATION_ERROR",
+                exception.getMessage(),
+                request.getRequestURI()
+        );
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ErrorResponse handleValidationException(
