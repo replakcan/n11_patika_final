@@ -2,6 +2,7 @@ package com.n11_alpermutluakcan.product_service.controller;
 
 import com.n11_alpermutluakcan.product_service.dto.ProductCreateRequest;
 import com.n11_alpermutluakcan.product_service.dto.ProductResponse;
+import com.n11_alpermutluakcan.product_service.dto.StockAdjustmentRequest;
 import com.n11_alpermutluakcan.product_service.dto.ProductUpdateRequest;
 import com.n11_alpermutluakcan.product_service.service.ProductService;
 import jakarta.validation.Valid;
@@ -38,6 +39,22 @@ public class ProductController {
             @Valid @RequestBody ProductUpdateRequest request
     ) {
         return productService.updateProduct(id, request);
+    }
+
+    @PostMapping("/{id}/decrement-stock")
+    public ProductResponse decrementStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockAdjustmentRequest request
+    ) {
+        return productService.decrementStock(id, request.quantity());
+    }
+
+    @PostMapping("/{id}/increment-stock")
+    public ProductResponse incrementStock(
+            @PathVariable Long id,
+            @Valid @RequestBody StockAdjustmentRequest request
+    ) {
+        return productService.incrementStock(id, request.quantity());
     }
 
     @DeleteMapping("/{id}")
