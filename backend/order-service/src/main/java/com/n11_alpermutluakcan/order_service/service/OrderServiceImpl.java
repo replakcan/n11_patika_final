@@ -13,24 +13,23 @@ import com.n11_alpermutluakcan.order_service.exception.CartOwnershipMismatchExce
 import com.n11_alpermutluakcan.order_service.exception.EmptyCartException;
 import com.n11_alpermutluakcan.order_service.exception.OrderNotFoundException;
 import com.n11_alpermutluakcan.order_service.mapper.OrderMapper;
+import com.n11_alpermutluakcan.order_service.messaging.producer.OrderSagaPublisher;
 import com.n11_alpermutluakcan.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
-@Slf4j
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
     private final CartClient cartClient;
     private final ProductClient productClient;
+    private final OrderSagaPublisher orderSagaPublisher;
 
     @Override
     @Transactional
@@ -44,46 +43,30 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = Order.builder()
                 .userId(userId)
-                .status(OrderStatus.CREATED)
+                .status(OrderStatus.PENDING)
                 .totalAmount(BigDecimal.ZERO)
                 .build();
 
         BigDecimal totalAmount = BigDecimal.ZERO;
-        List<StockAdjustment> decrementedStocks = new ArrayList<>();
+        for (CartItemSummary cartItem : cart.items()) {
+            ProductSummary product = productClient.getProductById(cartItem.productId());
+            BigDecimal lineTotal = product.price().multiply(BigDecimal.valueOf(cartItem.quantity()));
+            totalAmount = totalAmount.add(lineTotal);
 
-        try {
-            for (CartItemSummary cartItem : cart.items()) {
-                ProductSummary product = productClient.decrementStock(
-                        cartItem.productId(),
-                        cartItem.quantity(),
-                        accessToken
-                );
-                decrementedStocks.add(new StockAdjustment(product.id(), cartItem.quantity()));
-
-                BigDecimal lineTotal = product.price().multiply(BigDecimal.valueOf(cartItem.quantity()));
-                totalAmount = totalAmount.add(lineTotal);
-
-                order.addItem(OrderItem.builder()
-                        .productId(product.id())
-                        .productName(product.name())
-                        .unitPrice(product.price())
-                        .quantity(cartItem.quantity())
-                        .lineTotal(lineTotal)
-                        .build());
-            }
-
-            order.setTotalAmount(totalAmount);
-            Order savedOrder = orderRepository.save(order);
-
-            for (CartItemSummary cartItem : cart.items()) {
-                cartClient.deleteCartItem(cartItem.id(), accessToken);
-            }
-
-            return OrderMapper.toResponse(savedOrder);
-        } catch (RuntimeException exception) {
-            compensateStock(decrementedStocks, accessToken);
-            throw exception;
+            order.addItem(OrderItem.builder()
+                    .productId(product.id())
+                    .productName(product.name())
+                    .unitPrice(product.price())
+                    .quantity(cartItem.quantity())
+                    .lineTotal(lineTotal)
+                    .build());
         }
+
+        order.setTotalAmount(totalAmount);
+        Order savedOrder = orderRepository.save(order);
+        orderSagaPublisher.publishOrderCreated(savedOrder);
+
+        return OrderMapper.toResponse(savedOrder);
     }
 
     @Override
@@ -107,24 +90,5 @@ public class OrderServiceImpl implements OrderService {
         if (cart.userId() != null && !userId.equals(cart.userId())) {
             throw new CartOwnershipMismatchException(userId, cart.userId());
         }
-    }
-
-    private void compensateStock(List<StockAdjustment> decrementedStocks, String accessToken) {
-        for (int i = decrementedStocks.size() - 1; i >= 0; i--) {
-            StockAdjustment stockAdjustment = decrementedStocks.get(i);
-            try {
-                productClient.incrementStock(stockAdjustment.productId(), stockAdjustment.quantity(), accessToken);
-            } catch (RuntimeException compensationException) {
-                log.error(
-                        "Failed to compensate stock for product {} by quantity {}",
-                        stockAdjustment.productId(),
-                        stockAdjustment.quantity(),
-                        compensationException
-                );
-            }
-        }
-    }
-
-    private record StockAdjustment(Long productId, Integer quantity) {
     }
 }

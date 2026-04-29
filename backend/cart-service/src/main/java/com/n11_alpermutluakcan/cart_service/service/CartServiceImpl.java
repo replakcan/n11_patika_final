@@ -12,12 +12,15 @@ import com.n11_alpermutluakcan.cart_service.exception.InsufficientStockException
 import com.n11_alpermutluakcan.cart_service.exception.ProductInactiveException;
 import com.n11_alpermutluakcan.cart_service.mapper.CartMapper;
 import com.n11_alpermutluakcan.cart_service.repository.CartItemRepository;
+import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class CartServiceImpl implements CartService {
 
@@ -67,6 +70,13 @@ public class CartServiceImpl implements CartService {
     public void deleteCartItem(String userId, Long itemId) {
         CartItem cartItem = findCartItem(itemId, userId);
         cartItemRepository.delete(cartItem);
+    }
+
+    @Override
+    @Transactional
+    public void clearCart(String userId) {
+        int deletedItemCount = cartItemRepository.deleteAllByUserId(userId);
+        log.info("Cleared {} cart item(s) for user {}", deletedItemCount, userId);
     }
 
     private CartItem findCartItem(Long itemId, String userId) {
