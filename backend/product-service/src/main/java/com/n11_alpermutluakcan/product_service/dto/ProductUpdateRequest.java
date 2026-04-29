@@ -8,6 +8,7 @@ public record ProductUpdateRequest(
         @NotBlank(message = "Product name cannot be blank")
         String name,
 
+        @NotBlank(message = "Description cannot be blank")
         @Size(max = 1000, message = "Description cannot exceed 1000 characters")
         String description,
 
