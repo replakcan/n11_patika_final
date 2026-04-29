@@ -10,6 +10,7 @@ import com.n11_alpermutluakcan.order_service.entity.Order;
 import com.n11_alpermutluakcan.order_service.entity.OrderStatus;
 import com.n11_alpermutluakcan.order_service.exception.CartOwnershipMismatchException;
 import com.n11_alpermutluakcan.order_service.exception.EmptyCartException;
+import com.n11_alpermutluakcan.order_service.messaging.producer.OrderSagaPublisher;
 import com.n11_alpermutluakcan.order_service.repository.OrderRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,7 +26,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,11 +42,14 @@ class OrderServiceImplTest {
     @Mock
     private ProductClient productClient;
 
+    @Mock
+    private OrderSagaPublisher orderSagaPublisher;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 
     @Test
-    void shouldCreateOrderFromCartAndClearCartItems() {
+    void shouldCreatePendingOrderAndPublishSagaEvent() {
         String userId = "user-1";
         String accessToken = "token";
         CartItemSummary firstItem = new CartItemSummary(10L, 100L, 2, LocalDateTime.now(), LocalDateTime.now());
@@ -54,10 +57,10 @@ class OrderServiceImplTest {
         CartSummary cartSummary = new CartSummary(userId, 3, List.of(firstItem, secondItem));
 
         when(cartClient.getCart(accessToken)).thenReturn(cartSummary);
-        when(productClient.decrementStock(100L, 2, accessToken)).thenReturn(new ProductSummary(
+        when(productClient.getProductById(100L)).thenReturn(new ProductSummary(
                 100L, "Keyboard", "Mechanical keyboard", new BigDecimal("50.00"), 5, null, true
         ));
-        when(productClient.decrementStock(101L, 1, accessToken)).thenReturn(new ProductSummary(
+        when(productClient.getProductById(101L)).thenReturn(new ProductSummary(
                 101L, "Mouse", "Wireless mouse", new BigDecimal("20.00"), 3, null, true
         ));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
@@ -70,7 +73,7 @@ class OrderServiceImplTest {
 
         assertThat(response.id()).isEqualTo(1L);
         assertThat(response.userId()).isEqualTo(userId);
-        assertThat(response.status()).isEqualTo(OrderStatus.CREATED);
+        assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
         assertThat(response.totalAmount()).isEqualByComparingTo("120.00");
         assertThat(response.items()).hasSize(2);
 
@@ -80,11 +83,9 @@ class OrderServiceImplTest {
         assertThat(savedOrder.getItems()).hasSize(2);
         assertThat(savedOrder.getTotalAmount()).isEqualByComparingTo("120.00");
 
-        verify(productClient).decrementStock(100L, 2, accessToken);
-        verify(productClient).decrementStock(101L, 1, accessToken);
-        verify(cartClient).deleteCartItem(10L, accessToken);
-        verify(cartClient).deleteCartItem(11L, accessToken);
-        verify(productClient, never()).incrementStock(any(), any(), any());
+        verify(productClient).getProductById(100L);
+        verify(productClient).getProductById(101L);
+        verify(orderSagaPublisher).publishOrderCreated(savedOrder);
     }
 
     @Test
@@ -98,7 +99,8 @@ class OrderServiceImplTest {
                 .isInstanceOf(EmptyCartException.class);
 
         verify(orderRepository, never()).save(any(Order.class));
-        verify(productClient, never()).decrementStock(any(), any(), any());
+        verify(productClient, never()).getProductById(any());
+        verify(orderSagaPublisher, never()).publishOrderCreated(any(Order.class));
     }
 
     @Test
@@ -115,54 +117,7 @@ class OrderServiceImplTest {
                 .hasMessageContaining("actual user id: user-2");
 
         verify(orderRepository, never()).save(any(Order.class));
-        verify(productClient, never()).decrementStock(any(), any(), any());
-        verify(cartClient, never()).deleteCartItem(any(), any());
-    }
-
-    @Test
-    void shouldCompensateStockWhenLaterDecrementFails() {
-        String userId = "user-1";
-        String accessToken = "token";
-        CartItemSummary firstItem = new CartItemSummary(10L, 100L, 2, LocalDateTime.now(), LocalDateTime.now());
-        CartItemSummary secondItem = new CartItemSummary(11L, 101L, 1, LocalDateTime.now(), LocalDateTime.now());
-
-        when(cartClient.getCart(accessToken)).thenReturn(new CartSummary(userId, 3, List.of(firstItem, secondItem)));
-        when(productClient.decrementStock(100L, 2, accessToken)).thenReturn(new ProductSummary(
-                100L, "Keyboard", "Mechanical keyboard", new BigDecimal("50.00"), 5, null, true
-        ));
-        when(productClient.decrementStock(101L, 1, accessToken)).thenThrow(new RuntimeException("stock update failed"));
-
-        assertThatThrownBy(() -> orderService.placeOrder(userId, accessToken))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("stock update failed");
-
-        verify(productClient).incrementStock(100L, 2, accessToken);
-        verify(orderRepository, never()).save(any(Order.class));
-        verify(cartClient, never()).deleteCartItem(any(), any());
-    }
-
-    @Test
-    void shouldCompensateStockWhenCartClearingFails() {
-        String userId = "user-1";
-        String accessToken = "token";
-        CartItemSummary firstItem = new CartItemSummary(10L, 100L, 2, LocalDateTime.now(), LocalDateTime.now());
-
-        when(cartClient.getCart(accessToken)).thenReturn(new CartSummary(userId, 2, List.of(firstItem)));
-        when(productClient.decrementStock(100L, 2, accessToken)).thenReturn(new ProductSummary(
-                100L, "Keyboard", "Mechanical keyboard", new BigDecimal("50.00"), 5, null, true
-        ));
-        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
-            Order order = invocation.getArgument(0);
-            order.setId(1L);
-            return order;
-        });
-        doThrow(new RuntimeException("cart clear failed"))
-                .when(cartClient).deleteCartItem(10L, accessToken);
-
-        assertThatThrownBy(() -> orderService.placeOrder(userId, accessToken))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("cart clear failed");
-
-        verify(productClient).incrementStock(100L, 2, accessToken);
+        verify(productClient, never()).getProductById(any());
+        verify(orderSagaPublisher, never()).publishOrderCreated(any(Order.class));
     }
 }
