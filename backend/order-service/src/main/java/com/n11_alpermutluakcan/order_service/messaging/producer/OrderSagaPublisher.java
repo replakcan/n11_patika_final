@@ -6,6 +6,8 @@ import com.n11_alpermutluakcan.order_service.messaging.config.MessagingPropertie
 import com.n11_alpermutluakcan.order_service.messaging.event.ClearCartRequestedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.OrderCreatedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.OrderItemEvent;
+import com.n11_alpermutluakcan.order_service.messaging.event.PaymentItemEvent;
+import com.n11_alpermutluakcan.order_service.messaging.event.PaymentRequestedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.ReleaseStockRequestedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -53,6 +55,23 @@ public class OrderSagaPublisher {
         );
     }
 
+    public void publishPaymentRequested(Order order) {
+        PaymentRequestedEvent event = new PaymentRequestedEvent(
+                UUID.randomUUID().toString(),
+                order.getId(),
+                order.getUserId(),
+                order.getTotalAmount(),
+                toPaymentItemEvents(order.getItems()),
+                LocalDateTime.now()
+        );
+
+        rabbitTemplate.convertAndSend(
+                messagingProperties.getExchange(),
+                messagingProperties.getPaymentRequestedRoutingKey(),
+                event
+        );
+    }
+
     public void publishReleaseStockRequested(Order order) {
         ReleaseStockRequestedEvent event = new ReleaseStockRequestedEvent(
                 UUID.randomUUID().toString(),
@@ -72,6 +91,18 @@ public class OrderSagaPublisher {
     private List<OrderItemEvent> toOrderItemEvents(List<OrderItem> items) {
         return items.stream()
                 .map(item -> new OrderItemEvent(item.getProductId(), item.getQuantity()))
+                .toList();
+    }
+
+    private List<PaymentItemEvent> toPaymentItemEvents(List<OrderItem> items) {
+        return items.stream()
+                .map(item -> new PaymentItemEvent(
+                        item.getProductId(),
+                        item.getProductName(),
+                        item.getUnitPrice(),
+                        item.getQuantity(),
+                        item.getLineTotal()
+                ))
                 .toList();
     }
 }

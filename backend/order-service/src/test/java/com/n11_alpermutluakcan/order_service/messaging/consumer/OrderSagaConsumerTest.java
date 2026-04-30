@@ -4,6 +4,9 @@ import com.n11_alpermutluakcan.order_service.entity.Order;
 import com.n11_alpermutluakcan.order_service.entity.OrderStatus;
 import com.n11_alpermutluakcan.order_service.messaging.event.CartClearFailedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.CartClearedEvent;
+import com.n11_alpermutluakcan.order_service.messaging.event.PaymentFailedEvent;
+import com.n11_alpermutluakcan.order_service.messaging.event.PaymentInitializedEvent;
+import com.n11_alpermutluakcan.order_service.messaging.event.PaymentSucceededEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.StockReservationFailedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.event.StockReservedEvent;
 import com.n11_alpermutluakcan.order_service.messaging.producer.OrderSagaPublisher;
@@ -35,14 +38,14 @@ class OrderSagaConsumerTest {
     private OrderSagaConsumer orderSagaConsumer;
 
     @Test
-    void shouldMovePendingOrderToStockReservedAndRequestCartClear() {
+    void shouldMovePendingOrderToStockReservedAndRequestPayment() {
         Order order = buildOrder(OrderStatus.PENDING);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
         orderSagaConsumer.onStockReserved(new StockReservedEvent("evt-1", 1L, "user-1", LocalDateTime.now()));
 
         verify(orderRepository).save(order);
-        verify(orderSagaPublisher).publishClearCartRequested(order);
+        verify(orderSagaPublisher).publishPaymentRequested(order);
     }
 
     @Test
@@ -55,31 +58,58 @@ class OrderSagaConsumerTest {
         ));
 
         verify(orderRepository).save(order);
-        verify(orderSagaPublisher, never()).publishClearCartRequested(order);
+        verify(orderSagaPublisher, never()).publishPaymentRequested(order);
     }
 
     @Test
-    void shouldConfirmOrderAfterCartCleared() {
+    void shouldStorePaymentUrlWhenPaymentInitialized() {
         Order order = buildOrder(OrderStatus.STOCK_RESERVED);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
-        orderSagaConsumer.onCartCleared(new CartClearedEvent("evt-1", 1L, "user-1", LocalDateTime.now()));
+        orderSagaConsumer.onPaymentInitialized(new PaymentInitializedEvent(
+                "evt-1", 1L, "user-1", "https://sandbox.example/payment", LocalDateTime.now()
+        ));
 
         verify(orderRepository).save(order);
-        verify(orderSagaPublisher, never()).publishReleaseStockRequested(order);
     }
 
     @Test
-    void shouldFailOrderAndRequestStockReleaseWhenCartClearFails() {
-        Order order = buildOrder(OrderStatus.STOCK_RESERVED);
+    void shouldConfirmOrderAndRequestCartClearWhenPaymentSucceeds() {
+        Order order = buildOrder(OrderStatus.PAYMENT_PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        orderSagaConsumer.onPaymentSucceeded(new PaymentSucceededEvent(
+                "evt-1", 1L, "user-1", "payment-1", LocalDateTime.now()
+        ));
+
+        verify(orderRepository).save(order);
+        verify(orderSagaPublisher).publishClearCartRequested(order);
+    }
+
+    @Test
+    void shouldFailOrderAndRequestStockReleaseWhenPaymentFails() {
+        Order order = buildOrder(OrderStatus.PAYMENT_PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        orderSagaConsumer.onPaymentFailed(new PaymentFailedEvent(
+                "evt-1", 1L, "user-1", "payment failed", LocalDateTime.now()
+        ));
+
+        verify(orderRepository).save(order);
+        verify(orderSagaPublisher).publishReleaseStockRequested(order);
+    }
+
+    @Test
+    void shouldIgnoreCartClearFailureForConfirmedOrder() {
+        Order order = buildOrder(OrderStatus.CONFIRMED);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
         orderSagaConsumer.onCartClearFailed(new CartClearFailedEvent(
                 "evt-1", 1L, "user-1", "cart clear failed", LocalDateTime.now()
         ));
 
-        verify(orderRepository).save(order);
-        verify(orderSagaPublisher).publishReleaseStockRequested(order);
+        verify(orderRepository, never()).save(order);
+        verify(orderSagaPublisher, never()).publishReleaseStockRequested(order);
     }
 
     private Order buildOrder(OrderStatus status) {

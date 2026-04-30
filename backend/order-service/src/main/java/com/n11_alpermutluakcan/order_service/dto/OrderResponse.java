@@ -11,6 +11,7 @@ public record OrderResponse(
         String userId,
         OrderStatus status,
         BigDecimal totalAmount,
+        String paymentPageUrl,
         List<OrderItemResponse> items,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
