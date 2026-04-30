@@ -41,6 +41,21 @@ public class RabbitMessagingConfig {
     }
 
     @Bean
+    public Queue paymentInitializedQueue(MessagingProperties properties) {
+        return new Queue(properties.getPaymentInitializedQueue(), true);
+    }
+
+    @Bean
+    public Queue paymentSucceededQueue(MessagingProperties properties) {
+        return new Queue(properties.getPaymentSucceededQueue(), true);
+    }
+
+    @Bean
+    public Queue paymentFailedQueue(MessagingProperties properties) {
+        return new Queue(properties.getPaymentFailedQueue(), true);
+    }
+
+    @Bean
     public Binding stockReservedBinding(Queue stockReservedQueue, DirectExchange ecommerceExchange, MessagingProperties properties) {
         return BindingBuilder.bind(stockReservedQueue)
                 .to(ecommerceExchange)
@@ -66,6 +81,39 @@ public class RabbitMessagingConfig {
         return BindingBuilder.bind(cartClearFailedQueue)
                 .to(ecommerceExchange)
                 .with(properties.getCartClearFailedRoutingKey());
+    }
+
+    @Bean
+    public Binding paymentInitializedBinding(
+            Queue paymentInitializedQueue,
+            DirectExchange ecommerceExchange,
+            MessagingProperties properties
+    ) {
+        return BindingBuilder.bind(paymentInitializedQueue)
+                .to(ecommerceExchange)
+                .with(properties.getPaymentInitializedRoutingKey());
+    }
+
+    @Bean
+    public Binding paymentSucceededBinding(
+            Queue paymentSucceededQueue,
+            DirectExchange ecommerceExchange,
+            MessagingProperties properties
+    ) {
+        return BindingBuilder.bind(paymentSucceededQueue)
+                .to(ecommerceExchange)
+                .with(properties.getPaymentSucceededRoutingKey());
+    }
+
+    @Bean
+    public Binding paymentFailedBinding(
+            Queue paymentFailedQueue,
+            DirectExchange ecommerceExchange,
+            MessagingProperties properties
+    ) {
+        return BindingBuilder.bind(paymentFailedQueue)
+                .to(ecommerceExchange)
+                .with(properties.getPaymentFailedRoutingKey());
     }
 
     @Bean
