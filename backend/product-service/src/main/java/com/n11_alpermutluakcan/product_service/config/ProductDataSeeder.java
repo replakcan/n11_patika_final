@@ -16,6 +16,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.random.RandomGenerator;
 
 @Configuration
@@ -61,7 +62,7 @@ public class ProductDataSeeder {
             }
 
             Faker faker = new Faker(Locale.ENGLISH);
-            RandomGenerator random = RandomGenerator.getDefault();
+            RandomGenerator random = new Random();
             List<Product> products = new ArrayList<>();
 
             for (int i = 1; i <= productCount; i++) {
