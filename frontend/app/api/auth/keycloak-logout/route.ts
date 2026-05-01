@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export function GET() {
   const issuer = process.env.KEYCLOAK_ISSUER ?? "http://localhost:8085/realms/ecommerce";
   const clientId = process.env.KEYCLOAK_CLIENT_ID ?? "frontend";
