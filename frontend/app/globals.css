@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 99%;
+    --foreground: 222 26% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 26% 12%;
+    --primary: 356 79% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 207 18% 91%;
+    --secondary-foreground: 222 26% 12%;
+    --muted: 210 18% 94%;
+    --muted-foreground: 219 9% 39%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 13% 86%;
+    --input: 216 13% 86%;
+    --ring: 356 79% 48%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
