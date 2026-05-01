@@ -1,0 +1,80 @@
+{
+  "realm": "ecommerce",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "USER"
+      },
+      {
+        "name": "ADMIN"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ecommerce-client",
+      "name": "Ecommerce Frontend",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "change-me-frontend-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "post.logout.redirect.uris": "http://host.docker.internal:3000/*##http://dockerhost.local:3000/*##http://localhost:3000/*"
+      },
+      "redirectUris": [
+        "http://host.docker.internal:3000/*",
+        "http://dockerhost.local:3000/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://host.docker.internal:3000",
+        "http://dockerhost.local:3000",
+        "http://localhost:3000",
+        "+"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo-user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "email": "demo-user@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "user12345",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "USER"
+      ]
+    },
+    {
+      "username": "demo-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "email": "demo-admin@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin12345",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "USER",
+        "ADMIN"
+      ]
+    }
+  ]
+}
