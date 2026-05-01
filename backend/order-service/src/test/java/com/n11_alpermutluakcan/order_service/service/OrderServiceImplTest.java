@@ -10,6 +10,8 @@ import com.n11_alpermutluakcan.order_service.entity.Order;
 import com.n11_alpermutluakcan.order_service.entity.OrderStatus;
 import com.n11_alpermutluakcan.order_service.exception.CartOwnershipMismatchException;
 import com.n11_alpermutluakcan.order_service.exception.EmptyCartException;
+import com.n11_alpermutluakcan.order_service.exception.InsufficientStockException;
+import com.n11_alpermutluakcan.order_service.exception.ProductInactiveException;
 import com.n11_alpermutluakcan.order_service.messaging.producer.OrderSagaPublisher;
 import com.n11_alpermutluakcan.order_service.repository.OrderRepository;
 import org.junit.jupiter.api.Test;
@@ -118,6 +120,46 @@ class OrderServiceImplTest {
 
         verify(orderRepository, never()).save(any(Order.class));
         verify(productClient, never()).getProductById(any());
+        verify(orderSagaPublisher, never()).publishOrderCreated(any(Order.class));
+    }
+
+    @Test
+    void shouldRejectOrderWhenProductStockIsInsufficient() {
+        String userId = "user-1";
+        String accessToken = "token";
+        CartItemSummary item = new CartItemSummary(10L, 100L, 2, LocalDateTime.now(), LocalDateTime.now());
+
+        when(cartClient.getCart(accessToken)).thenReturn(new CartSummary(userId, 1, List.of(item)));
+        when(productClient.getProductById(100L)).thenReturn(new ProductSummary(
+                100L, "Keyboard", "Mechanical keyboard", new BigDecimal("50.00"), 1, null, true
+        ));
+
+        assertThatThrownBy(() -> orderService.placeOrder(userId, accessToken))
+                .isInstanceOf(InsufficientStockException.class)
+                .hasMessageContaining("product id 100")
+                .hasMessageContaining("Requested: 2")
+                .hasMessageContaining("available: 1");
+
+        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderSagaPublisher, never()).publishOrderCreated(any(Order.class));
+    }
+
+    @Test
+    void shouldRejectOrderWhenProductIsInactive() {
+        String userId = "user-1";
+        String accessToken = "token";
+        CartItemSummary item = new CartItemSummary(10L, 100L, 1, LocalDateTime.now(), LocalDateTime.now());
+
+        when(cartClient.getCart(accessToken)).thenReturn(new CartSummary(userId, 1, List.of(item)));
+        when(productClient.getProductById(100L)).thenReturn(new ProductSummary(
+                100L, "Keyboard", "Mechanical keyboard", new BigDecimal("50.00"), 5, null, false
+        ));
+
+        assertThatThrownBy(() -> orderService.placeOrder(userId, accessToken))
+                .isInstanceOf(ProductInactiveException.class)
+                .hasMessageContaining("Product id: 100");
+
+        verify(orderRepository, never()).save(any(Order.class));
         verify(orderSagaPublisher, never()).publishOrderCreated(any(Order.class));
     }
 }

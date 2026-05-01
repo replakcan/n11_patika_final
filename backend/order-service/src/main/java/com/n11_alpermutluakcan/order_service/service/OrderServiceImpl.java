@@ -11,7 +11,9 @@ import com.n11_alpermutluakcan.order_service.entity.OrderItem;
 import com.n11_alpermutluakcan.order_service.entity.OrderStatus;
 import com.n11_alpermutluakcan.order_service.exception.CartOwnershipMismatchException;
 import com.n11_alpermutluakcan.order_service.exception.EmptyCartException;
+import com.n11_alpermutluakcan.order_service.exception.InsufficientStockException;
 import com.n11_alpermutluakcan.order_service.exception.OrderNotFoundException;
+import com.n11_alpermutluakcan.order_service.exception.ProductInactiveException;
 import com.n11_alpermutluakcan.order_service.mapper.OrderMapper;
 import com.n11_alpermutluakcan.order_service.messaging.producer.OrderSagaPublisher;
 import com.n11_alpermutluakcan.order_service.repository.OrderRepository;
@@ -50,6 +52,7 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal totalAmount = BigDecimal.ZERO;
         for (CartItemSummary cartItem : cart.items()) {
             ProductSummary product = productClient.getProductById(cartItem.productId());
+            validateProductAvailability(product, cartItem.quantity());
             BigDecimal lineTotal = product.price().multiply(BigDecimal.valueOf(cartItem.quantity()));
             totalAmount = totalAmount.add(lineTotal);
 
@@ -89,6 +92,20 @@ public class OrderServiceImpl implements OrderService {
     private void validateCartOwnership(String userId, CartSummary cart) {
         if (cart.userId() != null && !userId.equals(cart.userId())) {
             throw new CartOwnershipMismatchException(userId, cart.userId());
+        }
+    }
+
+    private void validateProductAvailability(ProductSummary product, Integer requestedQuantity) {
+        if (!Boolean.TRUE.equals(product.active())) {
+            throw new ProductInactiveException(product.id());
+        }
+
+        if (product.stock() == null || product.stock() < requestedQuantity) {
+            throw new InsufficientStockException(
+                    product.id(),
+                    requestedQuantity,
+                    product.stock() == null ? 0 : product.stock()
+            );
         }
     }
 }
