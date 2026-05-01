@@ -13,6 +13,7 @@ public class IyzicoProperties {
     private String secretKey;
     private String baseUrl = "https://sandbox-api.iyzipay.com";
     private String callbackUrl;
+    private String frontendBaseUrl = "http://localhost:3000";
     private String locale = "tr";
     private String currency = "TRY";
     private String buyerName = "Sandbox";

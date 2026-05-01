@@ -58,13 +58,13 @@ public class PaymentSagaService {
     }
 
     @Transactional
-    public void handleCallback(String checkoutToken) {
+    public Long handleCallback(String checkoutToken) {
         Payment payment = paymentRepository.findByCheckoutToken(checkoutToken)
                 .orElseThrow(() -> new PaymentNotFoundException(checkoutToken));
 
         if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
             log.info("Ignoring duplicate successful callback for order {}", payment.getOrderId());
-            return;
+            return payment.getOrderId();
         }
 
         CheckoutFormRetrieveResult result = iyzicoPaymentGateway.retrieveCheckoutForm(
@@ -79,13 +79,14 @@ public class PaymentSagaService {
             payment.setFailureReason(null);
             paymentRepository.save(payment);
             paymentSagaPublisher.publishPaymentSucceeded(payment.getOrderId(), payment.getUserId(), result.paymentId());
-            return;
+            return payment.getOrderId();
         }
 
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(result.errorMessage());
         paymentRepository.save(payment);
         paymentSagaPublisher.publishPaymentFailed(payment.getOrderId(), payment.getUserId(), result.errorMessage());
+        return payment.getOrderId();
     }
 
     private void saveFailedPayment(PaymentRequestedEvent event, String conversationId, String failureReason) {
