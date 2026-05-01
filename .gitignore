@@ -22,6 +22,7 @@ Thumbs.db
 
 # Environment / secrets
 .env
+.env.compose.local
 .env.*
 !.env.example
 

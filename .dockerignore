@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+**/.idea
+**/target
+**/node_modules
+**/.next
+**/test-results
+**/*.log
+**/.env.local
+**/.env
+frontend/.env.local
+backend/*/order-service.out.log
+backend/*/order-service.err.log
+backend/*/payment-service.out.log
+backend/*/payment-service.err.log

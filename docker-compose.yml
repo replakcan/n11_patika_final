@@ -1,0 +1,355 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: n11-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME:-postgres} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: n11-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.3
+    container_name: n11-keycloak
+    command:
+      - start-dev
+      - --import-realm
+      - --http-port=8080
+      - --hostname-strict=false
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./deploy/keycloak/ecommerce-realm.json:/opt/keycloak/data/import/ecommerce-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  discovery-server:
+    image: ${IMAGE_REGISTRY:-n11-patika}/discovery-server:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/discovery-server/Dockerfile
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  config-server:
+    image: ${IMAGE_REGISTRY:-n11-patika}/config-server:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/config-server/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_REPO_PATH: file:/app/config-repo
+      EUREKA_HOSTNAME: discovery-server
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  product-service:
+    image: ${IMAGE_REGISTRY:-n11-patika}/product-service:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/product-service/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_SERVER_URL: "${CONFIG_SERVER_URL:-http://config-server:8888}"
+      PRODUCT_DB_URL: "${PRODUCT_DB_URL:-jdbc:postgresql://postgres:5432/product_db}"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      KEYCLOAK_ISSUER_URI: "${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ecommerce}"
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+
+  product-seeder:
+    image: ${IMAGE_REGISTRY:-n11-patika}/product-service:${IMAGE_TAG:-local}
+    profiles:
+      - seed
+    build:
+      context: .
+      dockerfile: backend/product-service/Dockerfile
+    entrypoint:
+      - sh
+      - -c
+      - java $${JAVA_OPTS:-} -jar /app/app.jar --spring.profiles.active=seed --spring.main.web-application-type=none --spring.cloud.config.enabled=false --spring.config.import=
+    environment:
+      PRODUCT_DB_URL: "${PRODUCT_DB_URL:-jdbc:postgresql://postgres:5432/product_db}"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      KEYCLOAK_ISSUER_URI: "${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ecommerce}"
+      APP_SEED_PRODUCTS_ENABLED: ${APP_SEED_PRODUCTS_ENABLED:-true}
+      APP_SEED_PRODUCTS_COUNT: ${APP_SEED_PRODUCTS_COUNT:-50}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  cart-service:
+    image: ${IMAGE_REGISTRY:-n11-patika}/cart-service:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/cart-service/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_SERVER_URL: "${CONFIG_SERVER_URL:-http://config-server:8888}"
+      CART_DB_URL: "${CART_DB_URL:-jdbc:postgresql://postgres:5432/cart_db}"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      KEYCLOAK_ISSUER_URI: "${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ecommerce}"
+      PRODUCT_SERVICE_BASE_URL: "${PRODUCT_SERVICE_BASE_URL:-http://product-service:8081}"
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+
+  order-service:
+    image: ${IMAGE_REGISTRY:-n11-patika}/order-service:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/order-service/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_SERVER_URL: "${CONFIG_SERVER_URL:-http://config-server:8888}"
+      ORDER_DB_URL: "${ORDER_DB_URL:-jdbc:postgresql://postgres:5432/order_db}"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      KEYCLOAK_ISSUER_URI: "${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ecommerce}"
+      PRODUCT_SERVICE_BASE_URL: "${PRODUCT_SERVICE_BASE_URL:-http://product-service:8081}"
+      CART_SERVICE_BASE_URL: "${CART_SERVICE_BASE_URL:-http://cart-service:8082}"
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      cart-service:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+
+  payment-service:
+    image: ${IMAGE_REGISTRY:-n11-patika}/payment-service:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/payment-service/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_SERVER_URL: "${CONFIG_SERVER_URL:-http://config-server:8888}"
+      PAYMENT_DB_URL: "${PAYMENT_DB_URL:-jdbc:postgresql://postgres:5432/payment_db}"
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newpassword}
+      KEYCLOAK_ISSUER_URI: "${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ecommerce}"
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      IYZICO_API_KEY: ${IYZICO_API_KEY:-}
+      IYZICO_SECRET_KEY: ${IYZICO_SECRET_KEY:-}
+      IYZICO_BASE_URL: "${IYZICO_BASE_URL:-https://sandbox-api.iyzipay.com}"
+      IYZICO_CALLBACK_URL: "${IYZICO_CALLBACK_URL:-https://replace-me.example.com/api/payments/callback}"
+      IYZICO_LOCALE: ${IYZICO_LOCALE:-tr}
+      IYZICO_CURRENCY: ${IYZICO_CURRENCY:-TRY}
+      IYZICO_BUYER_NAME: ${IYZICO_BUYER_NAME:-Sandbox}
+      IYZICO_BUYER_SURNAME: ${IYZICO_BUYER_SURNAME:-User}
+      IYZICO_BUYER_EMAIL: ${IYZICO_BUYER_EMAIL:-sandbox@example.com}
+      IYZICO_BUYER_IDENTITY_NUMBER: ${IYZICO_BUYER_IDENTITY_NUMBER:-11111111111}
+      IYZICO_BUYER_GSM_NUMBER: ${IYZICO_BUYER_GSM_NUMBER:-+905350000000}
+      IYZICO_BUYER_IP: ${IYZICO_BUYER_IP:-127.0.0.1}
+      IYZICO_ADDRESS: "${IYZICO_ADDRESS:-Altunizade Mah. Inci Cikmazi Sokak No: 3 Uskudar Istanbul}"
+      IYZICO_CITY: ${IYZICO_CITY:-Istanbul}
+      IYZICO_COUNTRY: ${IYZICO_COUNTRY:-Turkey}
+      IYZICO_ZIP_CODE: ${IYZICO_ZIP_CODE:-34742}
+      PAYMENT_RECONCILIATION_ENABLED: ${PAYMENT_RECONCILIATION_ENABLED:-true}
+      PAYMENT_RECONCILIATION_INTERVAL_MS: ${PAYMENT_RECONCILIATION_INTERVAL_MS:-60000}
+      PAYMENT_RECONCILIATION_CHECK_AFTER_SECONDS: ${PAYMENT_RECONCILIATION_CHECK_AFTER_SECONDS:-120}
+      PAYMENT_RECONCILIATION_EXPIRATION_MINUTES: ${PAYMENT_RECONCILIATION_EXPIRATION_MINUTES:-30}
+      APP_IYZICO_FRONTEND_BASE_URL: "${NEXTAUTH_URL:-http://dockerhost.local:3000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+
+  api-gateway:
+    image: ${IMAGE_REGISTRY:-n11-patika}/api-gateway:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backend/api-gateway/Dockerfile
+    environment:
+      EUREKA_DEFAULT_ZONE: "${EUREKA_DEFAULT_ZONE:-http://discovery-server:8761/eureka}"
+      CONFIG_SERVER_URL: "${CONFIG_SERVER_URL:-http://config-server:8888}"
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      cart-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+    ports:
+      - "8079:8079"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8079/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  frontend:
+    image: ${IMAGE_REGISTRY:-n11-patika}/frontend:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
+      API_BASE_URL: "http://api-gateway:8079"
+      NEXT_PUBLIC_API_BASE_URL: "${PUBLIC_API_BASE_URL:-http://dockerhost.local:8079}"
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ecommerce-client}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-change-me-frontend-secret}
+      KEYCLOAK_ISSUER: "${PUBLIC_KEYCLOAK_ISSUER:-http://dockerhost.local:8085/realms/ecommerce}"
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-nextauth-secret}
+      NEXTAUTH_URL: "${NEXTAUTH_URL:-http://dockerhost.local:3000}"
+    extra_hosts:
+      - "${PUBLIC_HOSTNAME:-dockerhost.local}:host-gateway"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+volumes:
+  postgres-data:
