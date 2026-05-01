@@ -40,11 +40,11 @@ public class PaymentCallbackController {
                 <head>
                   <meta charset="utf-8">
                   <meta name="viewport" content="width=device-width, initial-scale=1">
-                  <meta http-equiv="refresh" content="0;url=%s">
                   <title>Payment processed</title>
                 </head>
                 <body>
                   <p>Payment processed. Redirecting to your orders...</p>
+                  <noscript><a href="%s">Continue to your orders</a></noscript>
                   <script>window.top.location.replace("%s");</script>
                 </body>
                 </html>
