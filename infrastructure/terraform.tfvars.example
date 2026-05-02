@@ -1,0 +1,30 @@
+aws_region = "eu-central-1"
+
+# Use your own repo URL. HTTPS is easiest for a public repo.
+repository_url = "https://github.com/YOUR_USER/YOUR_REPO.git"
+git_ref        = "main"
+
+# Optional. Leave null if you will use AWS SSM Session Manager instead of SSH.
+key_name        = null
+ssh_cidr_blocks = []
+
+# For quick testing. Narrow this to your IP when possible.
+app_cidr_blocks = ["0.0.0.0/0"]
+
+instance_type = "t3.small"
+image_registry = "YOUR_DOCKERHUB_USERNAME"
+image_tag     = "latest"
+
+postgres_password       = "change-me-postgres"
+rabbitmq_password       = "change-me-rabbitmq"
+keycloak_admin_password = "change-me-keycloak-admin"
+keycloak_client_secret  = "change-me-frontend-client"
+nextauth_secret         = "change-me-to-a-long-random-string"
+
+iyzico_api_key      = ""
+iyzico_secret_key   = ""
+iyzico_callback_url = ""
+
+install_ngrok   = false
+ngrok_authtoken = ""
+ngrok_domain    = ""

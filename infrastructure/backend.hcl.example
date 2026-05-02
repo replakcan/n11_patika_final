@@ -1,0 +1,5 @@
+bucket         = "your-unique-terraform-state-bucket-name"
+key            = "n11-patika/dev/terraform.tfstate"
+region         = "eu-central-1"
+encrypt        = true
+use_lockfile   = true

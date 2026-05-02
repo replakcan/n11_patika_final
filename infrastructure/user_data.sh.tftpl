@@ -1,0 +1,214 @@
+#!/bin/bash
+set -euxo pipefail
+
+exec > >(tee /var/log/n11-user-data.log | logger -t n11-user-data -s 2>/dev/console) 2>&1
+
+APP_DIR="${app_dir}"
+
+dnf update -y
+dnf install -y amazon-ssm-agent docker git awscli jq
+
+systemctl enable --now amazon-ssm-agent
+systemctl enable --now docker
+
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+elif ! swapon --show=NAME | grep -qx /swapfile; then
+  swapon /swapfile
+fi
+
+IMDS_TOKEN="$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")"
+PUBLIC_IP="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)"
+PUBLIC_DNS="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname || true)"
+PUBLIC_HOSTNAME="$${PUBLIC_DNS:-$PUBLIC_IP}"
+FRONTEND_URL="http://$PUBLIC_HOSTNAME:3000"
+API_BASE_URL="http://$PUBLIC_HOSTNAME:8079"
+KEYCLOAK_ISSUER="http://$PUBLIC_HOSTNAME:8085/realms/ecommerce"
+IYZICO_CALLBACK_URL="${iyzico_callback_url}"
+
+if [ -z "$IYZICO_CALLBACK_URL" ]; then
+  IYZICO_CALLBACK_URL="$API_BASE_URL/api/payments/callback"
+fi
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+if [ "${install_ngrok}" = "true" ] && [ -n "${ngrok_authtoken}" ]; then
+  curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o /tmp/ngrok.tgz
+  tar -xzf /tmp/ngrok.tgz -C /usr/local/bin
+  ngrok config add-authtoken "${ngrok_authtoken}"
+
+  NGROK_COMMAND="/usr/local/bin/ngrok http 8079 --log=stdout"
+  if [ -n "${ngrok_domain}" ]; then
+    NGROK_COMMAND="$NGROK_COMMAND --domain=${ngrok_domain}"
+    IYZICO_CALLBACK_URL="https://${ngrok_domain}/api/payments/callback"
+  fi
+
+  cat >/etc/systemd/system/ngrok-api-gateway.service <<EOF
+[Unit]
+Description=ngrok tunnel for n11 api-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$NGROK_COMMAND
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now ngrok-api-gateway
+fi
+
+if [ ! -d "$APP_DIR/.git" ]; then
+  git clone "${repository_url}" "$APP_DIR"
+fi
+
+cd "$APP_DIR"
+git fetch --all --prune
+git checkout "${git_ref}"
+git pull --ff-only || true
+
+jq --arg frontend_url "$FRONTEND_URL" '
+  .sslRequired = "none" |
+  (.clients[] | select(.clientId == "ecommerce-client") | .redirectUris) += [
+    ($frontend_url + "/*")
+  ] |
+  (.clients[] | select(.clientId == "ecommerce-client") | .webOrigins) += [
+    $frontend_url
+  ] |
+  (.clients[] | select(.clientId == "ecommerce-client") | .attributes["post.logout.redirect.uris"]) += ("##" + $frontend_url + "/*")
+' deploy/keycloak/ecommerce-realm.json > /tmp/ecommerce-realm.json
+mv /tmp/ecommerce-realm.json deploy/keycloak/ecommerce-realm.json
+
+cat > .env.compose.local <<EOF
+POSTGRES_USERNAME=${postgres_username}
+POSTGRES_PASSWORD=${postgres_password}
+
+KEYCLOAK_ADMIN=${keycloak_admin}
+KEYCLOAK_ADMIN_PASSWORD=${keycloak_admin_password}
+KEYCLOAK_CLIENT_ID=ecommerce-client
+KEYCLOAK_CLIENT_SECRET=${keycloak_client_secret}
+
+PUBLIC_HOSTNAME=$PUBLIC_HOSTNAME
+NEXTAUTH_SECRET=${nextauth_secret}
+NEXTAUTH_URL=$FRONTEND_URL
+PUBLIC_API_BASE_URL=$API_BASE_URL
+PUBLIC_KEYCLOAK_ISSUER=$KEYCLOAK_ISSUER
+KEYCLOAK_ISSUER_URI=$KEYCLOAK_ISSUER
+
+EUREKA_DEFAULT_ZONE=http://discovery-server:8761/eureka
+CONFIG_SERVER_URL=http://config-server:8888
+
+PRODUCT_DB_URL=jdbc:postgresql://postgres:5432/product_db
+CART_DB_URL=jdbc:postgresql://postgres:5432/cart_db
+ORDER_DB_URL=jdbc:postgresql://postgres:5432/order_db
+PAYMENT_DB_URL=jdbc:postgresql://postgres:5432/payment_db
+
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=${rabbitmq_username}
+RABBITMQ_PASSWORD=${rabbitmq_password}
+
+PRODUCT_SERVICE_BASE_URL=http://product-service:8081
+CART_SERVICE_BASE_URL=http://cart-service:8082
+
+IYZICO_API_KEY=${iyzico_api_key}
+IYZICO_SECRET_KEY=${iyzico_secret_key}
+IYZICO_BASE_URL=https://sandbox-api.iyzipay.com
+IYZICO_CALLBACK_URL=$IYZICO_CALLBACK_URL
+IYZICO_LOCALE=tr
+IYZICO_CURRENCY=TRY
+IYZICO_BUYER_NAME=Sandbox
+IYZICO_BUYER_SURNAME=User
+IYZICO_BUYER_EMAIL=sandbox@example.com
+IYZICO_BUYER_IDENTITY_NUMBER=11111111111
+IYZICO_BUYER_GSM_NUMBER=+905350000000
+IYZICO_BUYER_IP=$PUBLIC_IP
+IYZICO_ADDRESS=Altunizade Mah. Inci Cikmazi Sokak No: 3 Uskudar Istanbul
+IYZICO_CITY=Istanbul
+IYZICO_COUNTRY=Turkey
+IYZICO_ZIP_CODE=34742
+
+PAYMENT_RECONCILIATION_ENABLED=true
+PAYMENT_RECONCILIATION_INTERVAL_MS=60000
+PAYMENT_RECONCILIATION_CHECK_AFTER_SECONDS=120
+PAYMENT_RECONCILIATION_EXPIRATION_MINUTES=30
+
+IMAGE_REGISTRY=${image_registry}
+IMAGE_TAG=${image_tag}
+EOF
+
+chmod 600 .env.compose.local
+
+cat > docker-compose.override.yml <<'EOF'
+services:
+  rabbitmq:
+    entrypoint:
+      - sh
+      - -c
+      - mkdir -p /var/lib/rabbitmq && echo "$${RABBITMQ_ERLANG_COOKIE:-n11-patika-dev-cookie}" > /var/lib/rabbitmq/.erlang.cookie && chown -R rabbitmq:rabbitmq /var/lib/rabbitmq && chmod 600 /var/lib/rabbitmq/.erlang.cookie && exec docker-entrypoint.sh rabbitmq-server
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "$${RABBITMQ_ERLANG_COOKIE:-n11-patika-dev-cookie}"
+    tmpfs:
+      - /var/lib/rabbitmq
+    healthcheck:
+      interval: 30s
+      timeout: 120s
+      retries: 20
+      start_period: 180s
+
+  keycloak:
+    healthcheck:
+      start_period: 300s
+      retries: 40
+
+  discovery-server:
+    environment:
+      JAVA_OPTS: "$${DISCOVERY_JAVA_OPTS:--Xms64m -Xmx128m -XX:+UseSerialGC}"
+
+  config-server:
+    environment:
+      JAVA_OPTS: "$${CONFIG_JAVA_OPTS:--Xms64m -Xmx160m -XX:+UseSerialGC}"
+
+  product-service:
+    environment:
+      JAVA_OPTS: "$${PRODUCT_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+  product-seeder:
+    environment:
+      JAVA_OPTS: "$${PRODUCT_SEEDER_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+  cart-service:
+    environment:
+      JAVA_OPTS: "$${CART_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+  order-service:
+    environment:
+      JAVA_OPTS: "$${ORDER_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+  payment-service:
+    environment:
+      JAVA_OPTS: "$${PAYMENT_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+  api-gateway:
+    environment:
+      JAVA_OPTS: "$${API_GATEWAY_JAVA_OPTS:--Xms96m -Xmx192m -XX:+UseSerialGC}"
+
+EOF
+
+if docker compose --env-file .env.compose.local pull; then
+  timeout 1800 docker compose --env-file .env.compose.local up -d --no-build || true
+  docker compose --env-file .env.compose.local ps || true
+  docker compose --env-file .env.compose.local --profile seed run --rm product-seeder || true
+else
+  echo "Images are not available yet. Push images to Docker Hub, then run deploy/ec2/deploy.sh through SSM or SSH."
+fi
