@@ -1,6 +1,7 @@
 {
   "realm": "ecommerce",
   "enabled": true,
+  "sslRequired": "none",
   "roles": {
     "realm": [
       {
