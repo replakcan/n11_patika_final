@@ -2,6 +2,13 @@
 
 Microservice-based e-commerce project with a Next.js frontend and Spring Boot backend services.
 
+## Demo Access
+
+You can try the deployed website with the following demo accounts:
+
+- Customer: `demo-user` / `user12345`
+- Admin panel: `demo-admin` / `admin12345`
+
 ## Project Structure
 
 - `frontend`: Next.js 14 storefront and admin UI
